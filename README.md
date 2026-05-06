@@ -8,7 +8,7 @@ Codes for a potential implementation of the paper "AGBD: A Global-scale Biomass 
 
 Otherwise the notebook has been tested and runs without issues.
 
-## Local Installation
+## Local Execution
 
 So far, the alternative .py files have only been executed on a Windows machine equipped with a rtx 5080 GPU. They are provided here only as an additional reference (and to enable the notebook to retrieve and use utils.py) with no guarantee they'll work elsewhere. 
 
