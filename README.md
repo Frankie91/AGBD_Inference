@@ -1,22 +1,26 @@
-Codes for a potential implementation of the paper "AGBD: A Global-scale Biomass Dataset" using Google Earth Engine as the remote sensing data source.
+Codes for a potential implementation of the paper "AGBD: A Global-scale Biomass Dataset" using Google Earth Engine as the main data source.
 
 ## Execution using Colab
 
+- Open the notebook in colab
+- Select a machine equipped with a GPU
+- You'll need to authenticate to your own gee account and project where required.
 
+Otherwise the notebook has been tested and runs without issues.
 
 ## Local Installation
 
-So far, the alternative .py files have only been executed in a conda environment on a Windows 11 Machine equipped with a rtx 5080 GPU. They are provided here only as an additional reference (and to enable the notebook to retrieve and use utils.py) with no guarantee they'll work elsewhere. 
+So far, the alternative .py files have only been executed on a Windows machine equipped with a rtx 5080 GPU. They are provided here only as an additional reference (and to enable the notebook to retrieve and use utils.py) with no guarantee they'll work elsewhere. 
 
-If you want to attempt to execute them locally, start by creating a conda environment using the environment .yml file.
+If you want to attempt to execute them locally, start by creating a conda environment using the provided environment .yml file.
 
 ## License
 
-The same [Creative Commons Attribution-NonCommercial 4.0 International License][cc-by-nc] used by the main repository is used here too for consistency.
+The same [Creative Commons Attribution-NonCommercial 4.0 International License][cc-by-nc] used by the main AGBD repository applies here too for consistency.
 
 ## Citing
 
-If use the codes provided here, please still remember to cite the main reference to the paper:
+If you use the codes provided in this repository, please still remember to cite the main reference to the paper:
 
 ```
 @article{Sialelli2025,
