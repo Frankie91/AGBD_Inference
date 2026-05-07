@@ -37,3 +37,4 @@ If you use the codes provided in this repository, please still remember to cite 
   pages = {829–838}
 }
 ```
+[cc-by-nc]: https://creativecommons.org/licenses/by-nc/4.0/
