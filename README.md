@@ -12,7 +12,7 @@ Otherwise the notebook has been tested and runs without issues.
 
 So far, the alternative .py files have only been executed on a Windows machine equipped with a rtx 5080 GPU. They are provided here only as an additional reference (and to enable the notebook to retrieve and use utils.py) with no guarantee they'll work elsewhere. 
 
-If you want to attempt to execute them locally, start by creating a conda environment using the provided environment .yml file.
+If you want to attempt to execute them locally, start by creating a conda environment using the provided environment .yml file. you'll also need to download the nico_net.py and models.py scripts from the main paper repository (https://github.com/ghjuliasialelli/AGBD)
 
 ## License
 
