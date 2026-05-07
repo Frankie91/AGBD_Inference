@@ -2,7 +2,7 @@ Codes for a potential implementation of the paper "AGBD: A Global-scale Biomass 
 
 ## Execution using Colab
 
-- Open the notebook in colab
+- Open the notebook in colab (already available and tested at this link: https://colab.research.google.com/drive/1zcMDL9hucOLRxU4Hl7Dv4Z1XfaeS9chu?usp=sharing)
 - Select a machine equipped with a GPU
 - You'll need to authenticate to your own gee account and project where required.
 
