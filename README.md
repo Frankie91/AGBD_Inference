@@ -1,4 +1,4 @@
-Codes for a potential implementation of the paper "AGBD: A Global-scale Biomass Dataset" using Google Earth Engine as the main data source.
+Codes for a potential implementation of the paper "AGBD: A Global-scale Biomass Dataset" using Google Earth Engine as the main data source. Still some misalignment in the predictions, probably caused by a mistake made by yours truly, so use with caution.
 
 ## Execution using Colab
 
