@@ -7,7 +7,7 @@ import pickle
 from tiler import Tiler, Merger
 
 import torch
-import PaperModels as mods
+import paper_models as mods
 import rasterio.enums
 import rioxarray as rxr
 
