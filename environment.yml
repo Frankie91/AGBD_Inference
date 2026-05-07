@@ -1,0 +1,22 @@
+name: agbd
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - pytorch=2.10
+  - lightning
+  - spyder
+  - numpy
+  - pandas
+  - geopandas
+  - rasterio
+  - rioxarray
+  - xarray
+  - scikit-learn
+  - scipy
+  - earthengine-api
+  - geemap
+  - pip
+  - pip:
+      - triton-windows
+      - tiler
