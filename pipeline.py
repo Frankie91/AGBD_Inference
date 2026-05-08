@@ -58,13 +58,16 @@ region = ee.Geometry.BBox(leftX, bottomY, rightX, topY)
 # ---------------------------------------------------------------------------#
 
 # s2_time_range can be either two dates or a list of years.
-# function automatically switches between using a single s2 image
+# function automatically switches between using the s2 image
+# specified in mapping.pkl
 # or computing a multi-year growing seasons (04/01 to 11/01) median accordingly.
 
 # to switch between the two, comment\uncomment accordingly
 
-# s2_time_range = [2018, 2019, 2020]
+# try manual download and processing
+
 s2_time_range = ["2020-10-22", "2020-10-23"]
+# s2_time_range = [2020]
 
 bands10 = ["B2", "B3", "B4", "B8"]
 bands20 = ["B5", "B6", "B7", "B8A", "B11", "B12"]
@@ -225,8 +228,8 @@ s2_dict = {
 
 # Desired Sentinel-2 order
 s2_order = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"]
-
 # Build ordered S2 stack
+
 s2_stack = np.stack([s2_dict[b] for b in s2_order], axis=0)
 
 raster_files = [
@@ -243,19 +246,21 @@ for file in raster_files:
         data = src.read()  # Legge tutte le bande del raster
         stacked_layers.append(data)
 
-# Converte la lista in un array NumPy
 stacked_vars = np.concatenate(stacked_layers, axis=0)
 
 stacked_array = np.concatenate([s2_stack, stacked_vars])
+
+in_features = stacked_array.shape[0]
 
 # ---------------------------------------------------------------------------#
 # Stacked Array Tiling ------------------------------------------------------#
 # ---------------------------------------------------------------------------#
 
-ovlap = 0.9
+# maximum overlap 
+ovlap = 0.95
 
 tiler = Tiler(data_shape=stacked_array.shape, 
-              tile_shape=(22,25,25), overlap=ovlap,
+              tile_shape=(in_features ,25,25), overlap=ovlap,
               channel_dimension=0) 
 
 # Calcolo del padding necessario per evitare problemi di dimensione delle tiles
@@ -287,20 +292,21 @@ device = torch.device("cuda")
 # maybe 4 5
 # no 1 2 3
 
-weights_list = ['60688111-1_best.ckpt', '18693595-1_best.ckpt',
+weights_list = ['60688111-1_best.ckpt', # 22 chn nico-net from the first repository
+                '18693595-1_best.ckpt', # 22 chn nico-net from the second repository
                 '18693595-2_best.ckpt', '18693595-3_best.ckpt',
                 '18693595-4_best.ckpt', '18693595-5_best.ckpt']
 
 state_dict = torch.load(weights_list[0], 
                             map_location=torch.device('cuda'))['state_dict']
 
-# check 
 state_dict = {k.replace('model.model.','model.'):v for k,v in state_dict.items()}
 
-model = mods.Net('nico').to(device)  
+model = mods.Net('nico',in_features).to(device) 
+
 model.load_state_dict(state_dict)
 
-batch_size = 64
+batch_size = 1024
 
 # Conversione delle patches in tensore Torch e creazione del dataloader di ingestione dati
 tiles_tensor = torch.tensor(tiles, dtype=torch.float32).to(device)
@@ -335,7 +341,9 @@ padded_image = np.pad(recon_arr, up_padding, mode="reflect")
 
 # up_pad aggiunge un padding riflettente ai bordi per evitare problemi di dimensione
 
-merger = Merger(reconstr_tiler, window="overlap-tile")
+# triang or overlap-tile to keep values low
+
+merger = Merger(reconstr_tiler, window='triang')
 
 for tile_id in range(len(tiles_ids)):
    merger.add(tiles_ids[tile_id], predictions[tile_id])
@@ -357,10 +365,11 @@ ut.array_to_raster( "AGBD.tif",
 
 with rxr.open_rasterio('AGBD.tif', masked=True) as dataset:
       AGBD = dataset.squeeze()
-      AGBD = AGBD.rio.reproject(
-              AGBD.rio.crs,
-              resolution=30, # "average" between best(s2 10m bands) and worst (land cover 100m) actual resolution
-              resampling=rasterio.enums.Resampling.average)
+      # only required if overlap is low
+      # AGBD = AGBD.rio.reproject(
+      #         AGBD.rio.crs,
+      #         resolution=20,
+      #         resampling=rasterio.enums.Resampling.average)
       
       AGBD = AGBD.rio.clip_box(*AOI, crs="EPSG:4326")
       
