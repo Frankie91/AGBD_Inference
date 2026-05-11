@@ -3,9 +3,9 @@ All credit goes to the original authors, so for licensing and citation refer to 
 
 ## Execution using Colab
 
-- Open the notebook in colab (already available and tested at this [link][notebook].
-- Select a machine equipped with a GPU
-- You'll need to authenticate to your own gee account and project where required.
+- Open the notebook in [colab][notebook].
+- Select a machine equipped with a GPU.
+- You'll need to authenticate to your own Google Earth Engine account and project where required.
 
 Otherwise the notebook has been tested and runs without issues.
 
