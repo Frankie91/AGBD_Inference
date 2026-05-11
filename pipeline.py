@@ -149,7 +149,7 @@ ut.array_to_raster("LonSin.tif",
                    lon_sin, AOIcrs, ref_lat, ref_lon)
 
 # ---------------------------------------------------------------------------#
-# DTM Download --------------------------------------------------------------#
+# DSM Download --------------------------------------------------------------#
 # ---------------------------------------------------------------------------#
 
 dataset = ee.ImageCollection("JAXA/ALOS/AW3D30/V4_1").select("DSM")
@@ -252,137 +252,115 @@ stacked_array = np.concatenate([s2_stack, stacked_vars])
 
 in_features = stacked_array.shape[0]
 
-# ---------------------------------------------------------------------------#
-# Stacked Array Tiling ------------------------------------------------------#
-# ---------------------------------------------------------------------------#
-
-# maximum overlap 
-ovlap = 0.95
-
-tiler = Tiler(data_shape=stacked_array.shape, 
-              tile_shape=(in_features ,25,25), overlap=ovlap,
-              channel_dimension=0) 
-
-# Calcolo del padding necessario per evitare problemi di dimensione delle tiles
-new_shape, up_padding = tiler.calculate_padding()
-tiler.recalculate(data_shape=new_shape)
-
-tiles = []
-tiles_ids = []
-   
-padded_image = np.pad(stacked_array, up_padding, mode="reflect")
-
-for tile_id, tile in tiler(padded_image, progress_bar=True):        
-    tile = np.expand_dims(tile, axis = 0) 
-    tiles.append(tile)
-    tiles_ids.append(tile_id)
-
-tiles = np.concatenate(tiles)
-
 # --------------------------------------------------------------------------#
-# Inference ----------------------------------------------------------------#
+# Model --------------------------------------------------------------------#
 # --------------------------------------------------------------------------#
 
-# installation of triton also required, pip install triton-windows
+device = torch.device("cuda")
 
-device = torch.device("cuda") 
+weights_list = [
+    '60688111-1_best.ckpt',
+    '18693595-1_best.ckpt',
+    '18693595-2_best.ckpt',
+    '18693595-3_best.ckpt',
+    '18693595-4_best.ckpt',
+    '18693595-5_best.ckpt'
+]
 
-# greece 
-# yes 0 
-# maybe 4 5
-# no 1 2 3
+state = torch.load(weights_list[0], map_location=device)
+state_dict = state['state_dict']
+state_dict = {k.replace('model.model.', 'model.'): v for k, v in state_dict.items()}
 
-weights_list = ['60688111-1_best.ckpt', # 22 chn nico-net from the first repository
-                '18693595-1_best.ckpt', # 22 chn nico-net from the second repository
-                '18693595-2_best.ckpt', '18693595-3_best.ckpt',
-                '18693595-4_best.ckpt', '18693595-5_best.ckpt']
-
-state_dict = torch.load(weights_list[0], 
-                            map_location=torch.device('cuda'))['state_dict']
-
-state_dict = {k.replace('model.model.','model.'):v for k,v in state_dict.items()}
-
-model = mods.Net('nico',in_features).to(device) 
-
+model = mods.Net('nico', in_features).to(device)
 model.load_state_dict(state_dict)
 
-batch_size = 1024
-
-# Conversione delle patches in tensore Torch e creazione del dataloader di ingestione dati
-tiles_tensor = torch.tensor(tiles, dtype=torch.float32).to(device)
-dataset = torch.utils.data.TensorDataset(tiles_tensor)
-dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
-
 torch.set_float32_matmul_precision('high')
-model = torch.compile(model, backend="inductor", 
-                      mode="default", dynamic=False)
-
+model = torch.compile(model, backend="inductor", mode="default", dynamic=False)
 model.eval()
 
-predictions = []
+# --------------------------------------------------------------------------#
+# Dense center-pixel inference ---------------------------------------------#
+# --------------------------------------------------------------------------#
+
+patch_size = 25
+half = patch_size // 2
+batch_size = 64
+
+# stacked_array must be (C, H, W)
+C, H, W = stacked_array.shape
+
+# reflect padding on spatial axes only
+padded = np.pad(
+    stacked_array,
+    ((0, 0), (half, half), (half, half)),
+    mode="reflect"
+)
+
+Pred_Arr = np.empty((H, W), dtype=np.float32)
 
 with torch.no_grad():
-    for batch in dataloader:
-        batch = batch[0].to(device)  
-        output = model(batch)
-        predictions.append(output)  
+    for row in range(H):
+        patches = []
 
-predictions = torch.cat(predictions, dim=0).cpu().numpy()
+        for col in range(W):
+            patch = padded[:, row:row + patch_size, col:col + patch_size]   
+            patches.append(patch)
 
-recon_arr = np.expand_dims(stacked_array[0], axis=0)
+        patches = np.stack(patches, axis=0).astype(np.float32)              
 
-reconstr_tiler = Tiler(data_shape=recon_arr.shape, 
-              tile_shape=(1,25,25), overlap=ovlap,
-              channel_dimension=0) 
+        for start in range(0, W, batch_size):
+            batch_np = patches[start:start + batch_size]                    
+            batch_t = torch.from_numpy(batch_np).to(device)
 
-new_shape, up_padding = reconstr_tiler.calculate_padding()
-reconstr_tiler.recalculate(data_shape=new_shape)
-padded_image = np.pad(recon_arr, up_padding, mode="reflect")
+            out = model(batch_t)
 
-# up_pad aggiunge un padding riflettente ai bordi per evitare problemi di dimensione
 
-# triang or overlap-tile to keep values low
+            center_pred = out[:, 0, half, half]
 
-merger = Merger(reconstr_tiler, window='triang')
 
-for tile_id in range(len(tiles_ids)):
-   merger.add(tiles_ids[tile_id], predictions[tile_id])
+            Pred_Arr[row, start:start + len(center_pred)] = center_pred.detach().cpu().numpy()
 
-Pred_Arr = merger.merge(extra_padding=up_padding).squeeze()
-
-# Negative Values are indeed possible!
 Pred_Arr[Pred_Arr < 0] = 0
+
+# --------------------------------------------------------------------------#
+# Write raster -------------------------------------------------------------#
+# --------------------------------------------------------------------------#
 
 with rxr.open_rasterio(s2_10m_path) as s2_10m:
     ref_lon = s2_10m.x.values
     ref_lat = s2_10m.y.values
 
-ut.array_to_raster( "AGBD.tif", 
-                   Pred_Arr, AOIcrs, ref_lat, ref_lon)
+ut.array_to_raster(
+    "AGBD.tif",
+    Pred_Arr,
+    AOIcrs,
+    ref_lat,
+    ref_lon
+)
 
-# rescaling and rewriting
-# add clipping the borders to original AOI
+# --------------------------------------------------------------------------#
+# Rescale and clip ---------------------------------------------------------#
+# --------------------------------------------------------------------------#
 
-with rxr.open_rasterio('AGBD.tif', masked=True) as dataset:
-      AGBD = dataset.squeeze()
-      # only required if overlap is low
-      # AGBD = AGBD.rio.reproject(
-      #         AGBD.rio.crs,
-      #         resolution=20,
-      #         resampling=rasterio.enums.Resampling.average)
-      
-      AGBD = AGBD.rio.clip_box(*AOI, crs="EPSG:4326")
-      
-      AGBD_crs = AGBD.rio.crs
-      AGBD_lat = AGBD.coords['y'].values
-      AGBD_long = AGBD.coords['x'].values
-      
-      del dataset
+with rxr.open_rasterio("AGBD.tif", masked=True) as dataset:
+    AGBD = dataset.squeeze()
+    AGBD = AGBD.rio.clip_box(*AOI, crs="EPSG:4326")
 
-ut.array_to_raster("AGBD.tif", AGBD.data, AGBD_crs, 
-             AGBD_lat, AGBD_long)
+    AGBD_crs = AGBD.rio.crs
+    AGBD_lat = AGBD.coords["y"].values
+    AGBD_long = AGBD.coords["x"].values
 
-# clipping the predictions for comparison
+ut.array_to_raster(
+    "AGBD.tif",
+    AGBD.data,
+    AGBD_crs,
+    AGBD_lat,
+    AGBD_long
+)
+
+# --------------------------------------------------------------------------#
+# Reference clipping -------------------------------------------------------#
+# --------------------------------------------------------------------------#
 
 with rxr.open_rasterio("34TGL.tif", masked=True) as src:
     AGBD_REF = src.squeeze()
@@ -393,3 +371,153 @@ with rxr.open_rasterio("34TGL.tif", masked=True) as src:
     )
 
 AGBD_REF.rio.to_raster("AGBD_REF.tif")
+
+# ---------------------------------------------------------------------------#
+# Stacked Array Tiling ------------------------------------------------------#
+# ---------------------------------------------------------------------------#
+# Alternative, faster approach but so far produces worse quality results.
+# DO NOT RUN if you have already run the inference process using the
+# sliding window in the previous cell, skip directly to the next one
+# to compare the results
+
+# percentage of overlap between adjacent tiles, where:
+# 1 full overlap
+# 0 no overlap
+# almost full overlap gives better results.
+# maximum overlap 
+# ovlap = 0.95
+
+# tiler = Tiler(data_shape=stacked_array.shape, 
+#               tile_shape=(in_features ,25,25), overlap=ovlap,
+#               channel_dimension=0) 
+
+# # Calcolo del padding necessario per evitare problemi di dimensione delle tiles
+# new_shape, up_padding = tiler.calculate_padding()
+# tiler.recalculate(data_shape=new_shape)
+
+# tiles = []
+# tiles_ids = []
+   
+# padded_image = np.pad(stacked_array, up_padding, mode="reflect")
+
+# for tile_id, tile in tiler(padded_image, progress_bar=True):        
+#     tile = np.expand_dims(tile, axis = 0) 
+#     tiles.append(tile)
+#     tiles_ids.append(tile_id)
+
+# tiles = np.concatenate(tiles)
+
+# --------------------------------------------------------------------------#
+# Inference ----------------------------------------------------------------#
+# --------------------------------------------------------------------------#
+
+# installation of triton also required, pip install triton-windows
+
+# device = torch.device("cuda") 
+
+# # greece 
+# # yes 0 
+# # maybe 4 5
+# # no 1 2 3
+
+# weights_list = ['60688111-1_best.ckpt', # 22 chn nico-net from the first repository
+#                 '18693595-1_best.ckpt', # 22 chn nico-net from the second repository
+#                 '18693595-2_best.ckpt', '18693595-3_best.ckpt',
+#                 '18693595-4_best.ckpt', '18693595-5_best.ckpt']
+
+# state_dict = torch.load(weights_list[0], 
+#                             map_location=torch.device('cuda'))['state_dict']
+
+# state_dict = {k.replace('model.model.','model.'):v for k,v in state_dict.items()}
+
+# model = mods.Net('nico',in_features).to(device) 
+
+# model.load_state_dict(state_dict)
+
+# batch_size = 1024
+
+# # Conversione delle patches in tensore Torch e creazione del dataloader di ingestione dati
+# tiles_tensor = torch.tensor(tiles, dtype=torch.float32).to(device)
+# dataset = torch.utils.data.TensorDataset(tiles_tensor)
+# dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
+# torch.set_float32_matmul_precision('high')
+# model = torch.compile(model, backend="inductor", 
+#                       mode="default", dynamic=False)
+
+# model.eval()
+
+# predictions = []
+
+# with torch.no_grad():
+#     for batch in dataloader:
+#         batch = batch[0].to(device)  
+#         output = model(batch)
+#         predictions.append(output)  
+
+# predictions = torch.cat(predictions, dim=0).cpu().numpy()
+
+# recon_arr = np.expand_dims(stacked_array[0], axis=0)
+
+# reconstr_tiler = Tiler(data_shape=recon_arr.shape, 
+#               tile_shape=(1,25,25), overlap=ovlap,
+#               channel_dimension=0) 
+
+# new_shape, up_padding = reconstr_tiler.calculate_padding()
+# reconstr_tiler.recalculate(data_shape=new_shape)
+# padded_image = np.pad(recon_arr, up_padding, mode="reflect")
+
+# # up_pad aggiunge un padding riflettente ai bordi per evitare problemi di dimensione
+
+# # triang or overlap-tile to keep values low
+
+# merger = Merger(reconstr_tiler, window='triang')
+
+# for tile_id in range(len(tiles_ids)):
+#    merger.add(tiles_ids[tile_id], predictions[tile_id])
+
+# Pred_Arr = merger.merge(extra_padding=up_padding).squeeze()
+
+# # Negative Values are indeed possible!
+# Pred_Arr[Pred_Arr < 0] = 0
+
+# with rxr.open_rasterio(s2_10m_path) as s2_10m:
+#     ref_lon = s2_10m.x.values
+#     ref_lat = s2_10m.y.values
+
+# ut.array_to_raster( "AGBD.tif", 
+#                    Pred_Arr, AOIcrs, ref_lat, ref_lon)
+
+# # rescaling and rewriting
+# # add clipping the borders to original AOI
+
+# with rxr.open_rasterio('AGBD.tif', masked=True) as dataset:
+#       AGBD = dataset.squeeze()
+#       # only required if overlap is low
+#       # AGBD = AGBD.rio.reproject(
+#       #         AGBD.rio.crs,
+#       #         resolution=20,
+#       #         resampling=rasterio.enums.Resampling.average)
+      
+#       AGBD = AGBD.rio.clip_box(*AOI, crs="EPSG:4326")
+      
+#       AGBD_crs = AGBD.rio.crs
+#       AGBD_lat = AGBD.coords['y'].values
+#       AGBD_long = AGBD.coords['x'].values
+      
+#       del dataset
+
+# ut.array_to_raster("AGBD.tif", AGBD.data, AGBD_crs, 
+#              AGBD_lat, AGBD_long)
+
+# # clipping the predictions for comparison
+
+# with rxr.open_rasterio("34TGL.tif", masked=True) as src:
+#     AGBD_REF = src.squeeze()
+#     AGBD_REF = AGBD_REF.rio.clip_box(*AOI, crs="EPSG:4326")
+#     AGBD_REF = AGBD_REF.rio.reproject_match(
+#         AGBD,
+#         resampling=rasterio.enums.Resampling.average
+#     )
+
+# AGBD_REF.rio.to_raster("AGBD_REF.tif")
