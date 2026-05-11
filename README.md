@@ -3,7 +3,7 @@ All credit goes to the original authors, so for licensing and citation refer to 
 
 ## Execution using Colab
 
-- Open the notebook in colab (already available and tested at this link: https://colab.research.google.com/drive/1zcMDL9hucOLRxU4Hl7Dv4Z1XfaeS9chu?usp=sharing)
+- Open the notebook in colab (already available and tested at this [link][notebook].
 - Select a machine equipped with a GPU
 - You'll need to authenticate to your own gee account and project where required.
 
@@ -17,5 +17,6 @@ If you want to attempt to execute them locally, start by creating a conda enviro
 
 [agbd]: https://agbdataset.github.io/
 [repo]: https://github.com/ghjuliasialelli/AGBD
-[nico_net] : https://github.com/ghjuliasialelli/AGBD/blob/main/Models/nico_net.py
-[models] : https://github.com/ghjuliasialelli/AGBD/blob/main/Models/models.py
+[nico_net]: https://github.com/ghjuliasialelli/AGBD/blob/main/Models/nico_net.py
+[models]: https://github.com/ghjuliasialelli/AGBD/blob/main/Models/models.py
+[notebook]: https://colab.research.google.com/drive/1zcMDL9hucOLRxU4Hl7Dv4Z1XfaeS9chu?usp=sharing
