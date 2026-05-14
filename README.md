@@ -1,4 +1,4 @@
-Codes for a potential implementation to new regions of the paper ["AGBD: A Global-scale Biomass Dataset"][agbd] by Sjalelli et al. (2025) using Google Earth Engine as the main data source. Still some misalignment in the predictions, probably caused by a mistake made by yours truly, so use with caution.
+Codes for a potential implementation to new regions of the paper ["AGBD: A Global-scale Biomass Dataset"][agbd] by Sialelli et al. (2025) using Google Earth Engine as the main data source. Still some misalignment in the predictions, probably caused by a mistake made by yours truly, so use with caution.
 All credit goes to the original authors, so for licensing and citation refer to the main paper [repository][repo].
 
 ## Execution using Colab
