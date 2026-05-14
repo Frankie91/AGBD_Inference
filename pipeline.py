@@ -22,24 +22,23 @@ ee.Initialize(
     opt_url='https://earthengine-highvolume.googleapis.com')
 
 # Loading Normalization Values Dictionary
-with open('statistics_subset_2019-2020-v4.pkl', 'rb') as file:
+with open(r'statistics_subset_2019-2020-v4_new.pkl', 'rb') as file:
     Norm_Values = pickle.load(file)
 
-s2_10m_path = "S2_10m.tif"
-
 # Sicily
-# AOIcrs = "EPSG:32633"
-# AOI = 12.83139213,37.63523419,12.85789976,37.65396832
+S2_tile = "33SUB"
+AOIcrs = "EPSG:32633"
+AOI = 12.82127429,37.63081401,12.86293210,37.66028692
 
 # Greece
-S2_tile = "34TGL"
-AOIcrs = "EPSG:2100"
-# list of test regions used 
-# AOI = 24.00551587,40.94915108,24.03336070,40.97226228
-AOI = 23.98311359,40.90969646,24.00233295,40.92263750
+# S2_tile = "34TGL"
+# AOIcrs = "EPSG:2100"
+# # list of test regions used 
+# # AOI = 24.00551587,40.94915108,24.03336070,40.97226228
+# AOI = 23.98311359,40.90969646,24.00233295,40.92263750
 
-# slightly enlarge the download area to minimize border effects
-# in the final AGBD estimate
+# slightly enlarge the download area to avoid border anomalies
+# in the final AGB estimate
 incr_fact = 0.01
 
 topY = AOI[3] + incr_fact
@@ -49,69 +48,69 @@ leftX = AOI[0] - incr_fact
 
 region = ee.Geometry.BBox(leftX, bottomY, rightX, topY)
 
-# Africa - to test with the region in ghana provided by the authors
-# AOIcrs = "EPSG:32630"
-# AOI = -1.58834601,6.00660534,-1.56756681,6.02313820
-
 # ---------------------------------------------------------------------------#
 # Sentinel 2 Processing -----------------------------------------------------#
 # ---------------------------------------------------------------------------#
 
-# s2_time_range can be either two dates or a list of years.
-# function automatically switches between using the s2 image
-# specified in mapping.pkl
-# or computing a multi-year growing seasons (04/01 to 11/01) median accordingly.
+# intervals must be either day before and after (to get a single specific 
+# product for that tile) or longer. always passed as a list of lists, even for
+# a single product.
 
-# to switch between the two, comment\uncomment accordingly
+# Sicily
+# s2_time_ranges = [["2024-01-01", "2024-12-31"]]
 
-# try manual download and processing
+# Greece
+s2_time_ranges = [["2020-08-30", "2020-09-01"],
+    ["2020-11-25", "2020-11-27"]]
 
-s2_time_range = ["2020-10-22", "2020-10-23"]
-# s2_time_range = [2020]
+months_list = [tr[0].split('-')[1] + '_' + tr[0].split('-')[0][2:] for tr in s2_time_ranges]
 
 bands10 = ["B2", "B3", "B4", "B8"]
 bands20 = ["B5", "B6", "B7", "B8A", "B11", "B12"]
 bands60 = ["B1", "B9"]
 
-# 1. Export 10 m stack as reference grid
-ut.sentinel2_processing(
-    band_names=bands10,
-    export_scale=10,
-    final_tif="S2_10m.tif",
-    aoi_crs=AOIcrs,
-    region=region,
-    norm_values=Norm_Values,
-    s2_tile=S2_tile,
-    s2_time_range=s2_time_range,
-)
-
-# 2. Open the saved 10 m raster as alignment template
-with rxr.open_rasterio(s2_10m_path) as match_10m:
-    # 3. Export 20 m and align to 10 m
+for m, tr in enumerate(s2_time_ranges):
+    month = months_list[m]
+    s2_10m_path = f"S2_10m_{month}.tif"
+    # 1. Export 10 m stack as reference grid
     ut.sentinel2_processing(
-        band_names=bands20,
-        export_scale=20,
-        final_tif="S2_20m.tif",
+        band_names=bands10,
+        export_scale=10,
+        final_tif=s2_10m_path,
         aoi_crs=AOIcrs,
         region=region,
         norm_values=Norm_Values,
         s2_tile=S2_tile,
-        s2_time_range=s2_time_range,
-        match_raster=match_10m
+        s2_time_range=tr,
     )
-
-    # 4. Export 60 m and align to 10 m
-    ut.sentinel2_processing(
-        band_names=bands60,
-        export_scale=60,
-        final_tif="S2_60m.tif",
-        aoi_crs=AOIcrs,
-        region=region,
-        norm_values=Norm_Values,
-        s2_tile=S2_tile,
-        s2_time_range=s2_time_range,        
-        match_raster=match_10m
-    )
+    
+    # 2. Open the saved 10 m raster as alignment template
+    with rxr.open_rasterio(s2_10m_path) as match_10m:
+        # 3. Export 20 m and align to 10 m
+        ut.sentinel2_processing(
+            band_names=bands20,
+            export_scale=20,
+            final_tif=f"S2_20m_{month}.tif",
+            aoi_crs=AOIcrs,
+            region=region,
+            norm_values=Norm_Values,
+            s2_tile=S2_tile,
+            s2_time_range=tr,
+            match_raster=match_10m
+        )
+    
+        # 4. Export 60 m and align to 10 m
+        ut.sentinel2_processing(
+            band_names=bands60,
+            export_scale=60,
+            final_tif=f"S2_60m_{month}.tif",
+            aoi_crs=AOIcrs,
+            region=region,
+            norm_values=Norm_Values,
+            s2_tile=S2_tile,
+            s2_time_range=tr,        
+            match_raster=match_10m
+        )
 
 # ---------------------------------------------------------------------------#
 # Lat\Lon Sin\Cos Layers Calculation ----------------------------------------#
@@ -171,9 +170,9 @@ with rxr.open_rasterio(s2_10m_path) as s2_10m:
 
 alos_bands = ["HH", "HV"]
 
-palsar_years = [2020]
+# palsar_years = [2020]
 # in case multi-year median is a better approach, uncomment below and comment above.
-# palsar_years = [2018, 2019, 2020]
+palsar_years = [2024]
 
 with rxr.open_rasterio(s2_10m_path) as s2_10m:
     ut.palsar_processing(
@@ -197,166 +196,185 @@ with rxr.open_rasterio(s2_10m_path) as s2_10m:
     )
 
 # ---------------------------------------------------------------------------#
-# Stacked Array Construction ------------------------------------------------#
+# Inference -----------------------------------------------------------------#
 # ---------------------------------------------------------------------------#
 
-# Read grouped S2 rasters
-with rasterio.open("S2_10m.tif") as src:
-    s2_10 = src.read()
-
-with rasterio.open("S2_20m.tif") as src:
-    s2_20 = src.read()   
-
-with rasterio.open("S2_60m.tif") as src:
-    s2_60 = src.read()   
-
-# Map arrays to actual band names
-s2_dict = {
-    "B2":  s2_10[0],
-    "B3":  s2_10[1],
-    "B4":  s2_10[2],
-    "B8":  s2_10[3],
-    "B5":  s2_20[0],
-    "B6":  s2_20[1],
-    "B7":  s2_20[2],
-    "B8A": s2_20[3],
-    "B11": s2_20[4],
-    "B12": s2_20[5],
-    "B1":  s2_60[0],
-    "B9":  s2_60[1],
-}
-
-# Desired Sentinel-2 order
-s2_order = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"]
-# Build ordered S2 stack
-
-s2_stack = np.stack([s2_dict[b] for b in s2_order], axis=0)
-
-raster_files = [
-    "LatCos", "LatSin", "LonCos", "LonSin",
-    "Palsar_HH", "Palsar_HV",
-    "LC_Cos","LC_Sin","LC_Prob", "ALOS_DSM"
-]
-
-stacked_layers = []
-
-# Legge tutti i raster e li impila nella lista
-for file in raster_files:
-    with rasterio.open(file + '.tif') as src:
-        data = src.read()  # Legge tutte le bande del raster
-        stacked_layers.append(data)
-
-stacked_vars = np.concatenate(stacked_layers, axis=0)
-
-stacked_array = np.concatenate([s2_stack, stacked_vars])
-
-in_features = stacked_array.shape[0]
-
-# --------------------------------------------------------------------------#
-# Model --------------------------------------------------------------------#
-# --------------------------------------------------------------------------#
+# store intermediate agb estimates filenames for final merging
+agb_estimates = []
 
 device = torch.device("cuda")
 
-weights_list = [
-    '60688111-1_best.ckpt',
-    '18693595-1_best.ckpt',
-    '18693595-2_best.ckpt',
-    '18693595-3_best.ckpt',
-    '18693595-4_best.ckpt',
-    '18693595-5_best.ckpt'
-]
 
-state = torch.load(weights_list[0], map_location=device)
-state_dict = state['state_dict']
-state_dict = {k.replace('model.model.', 'model.'): v for k, v in state_dict.items()}
+# loop over s2 images used 
+for month in months_list:   
+    
+    # Read grouped S2 rasters
+    with rasterio.open(f"S2_10m_{month}.tif") as src:
+        s2_10 = src.read()
+    
+    with rasterio.open(f"S2_20m_{month}.tif") as src:
+        s2_20 = src.read()   
+    
+    with rasterio.open(f"S2_60m_{month}.tif") as src:
+        s2_60 = src.read()   
+    
+    # Map arrays to actual band names
+    s2_dict = {
+        "B2":  s2_10[0],
+        "B3":  s2_10[1],
+        "B4":  s2_10[2],
+        "B8":  s2_10[3],
+        "B5":  s2_20[0],
+        "B6":  s2_20[1],
+        "B7":  s2_20[2],
+        "B8A": s2_20[3],
+        "B11": s2_20[4],
+        "B12": s2_20[5],
+        "B1":  s2_60[0],
+        "B9":  s2_60[1],
+    }
+    
+    # Desired Sentinel-2 order
+    s2_order = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"]
+    # Build ordered S2 stack
+    
+    s2_stack = np.stack([s2_dict[b] for b in s2_order], axis=0)
+    
+    raster_files = [
+        "LatCos", "LatSin", "LonCos", "LonSin",
+        "Palsar_HH", "Palsar_HV",
+        "LC_Cos","LC_Sin","LC_Prob", "ALOS_DSM"
+    ]
+    
+    stacked_layers = []
+    
+    for file in raster_files:
+        with rasterio.open(file + '.tif') as src:
+            data = src.read()  
+            stacked_layers.append(data)
+    
+    stacked_vars = np.concatenate(stacked_layers, axis=0)
+    
+    stacked_array = np.concatenate([s2_stack, stacked_vars])
+    
+    weights_list = [
+        '18693595-1_best.ckpt',
+        '18693595-3_best.ckpt',
+    ]
+    
+    # run inference for all weights
 
-model = mods.Net('nico', in_features).to(device)
-model.load_state_dict(state_dict)
-
-torch.set_float32_matmul_precision('high')
-model = torch.compile(model, backend="inductor", mode="default", dynamic=False)
-model.eval()
-
-# --------------------------------------------------------------------------#
-# Dense center-pixel inference ---------------------------------------------#
-# --------------------------------------------------------------------------#
-
-patch_size = 25
-half = patch_size // 2
-batch_size = 64
-
-# stacked_array must be (C, H, W)
-C, H, W = stacked_array.shape
-
-# reflect padding on spatial axes only
-padded = np.pad(
-    stacked_array,
-    ((0, 0), (half, half), (half, half)),
-    mode="reflect"
-)
-
-Pred_Arr = np.empty((H, W), dtype=np.float32)
-
-with torch.no_grad():
-    for row in range(H):
-        patches = []
-
-        for col in range(W):
-            patch = padded[:, row:row + patch_size, col:col + patch_size]   
-            patches.append(patch)
-
-        patches = np.stack(patches, axis=0).astype(np.float32)              
-
-        for start in range(0, W, batch_size):
-            batch_np = patches[start:start + batch_size]                    
-            batch_t = torch.from_numpy(batch_np).to(device)
-
-            out = model(batch_t)
+    for w in weights_list:
+        agb_out_name = f"AGB_{month}_{w.split('_')[0]}.tif"
+        agb_estimates.append(agb_out_name)
+        
+        cfg_path = w.split('_')[0] + '_cfg.pkl'
+        # Loading Config Dictionary
+        with open(cfg_path, 'rb') as file:
+            cfg = pickle.load(file)
+    
+        state = torch.load(w, map_location=device)
+        state_dict = state['state_dict']
+        state_dict = {k.replace('model.model.', 'model.'): v for k, v in state_dict.items()}
+        
+        model = mods.Net('nico', in_features=cfg['in_features'],
+                         num_outputs = cfg['num_outputs'],
+                         channel_dims=cfg['channel_dims'], 
+                         num_sepconv_blocks=cfg['num_sepconv_blocks'],
+                         num_sepconv_filters=cfg['num_sepconv_filters'],
+                         patch_size=cfg['patch_size'],
+                         max_pool=cfg['max_pool'],
+                         long_skip = cfg['long_skip']).to(device)
 
 
-            center_pred = out[:, 0, half, half]
-
-
-            Pred_Arr[row, start:start + len(center_pred)] = center_pred.detach().cpu().numpy()
-
-Pred_Arr[Pred_Arr < 0] = 0
-
-# --------------------------------------------------------------------------#
-# Write raster -------------------------------------------------------------#
-# --------------------------------------------------------------------------#
-
-with rxr.open_rasterio(s2_10m_path) as s2_10m:
-    ref_lon = s2_10m.x.values
-    ref_lat = s2_10m.y.values
-
-ut.array_to_raster(
-    "AGBD.tif",
-    Pred_Arr,
-    AOIcrs,
-    ref_lat,
-    ref_lon
-)
-
-# --------------------------------------------------------------------------#
-# Rescale and clip ---------------------------------------------------------#
-# --------------------------------------------------------------------------#
-
-with rxr.open_rasterio("AGBD.tif", masked=True) as dataset:
-    AGBD = dataset.squeeze()
-    AGBD = AGBD.rio.clip_box(*AOI, crs="EPSG:4326")
-
-    AGBD_crs = AGBD.rio.crs
-    AGBD_lat = AGBD.coords["y"].values
-    AGBD_long = AGBD.coords["x"].values
-
-ut.array_to_raster(
-    "AGBD.tif",
-    AGBD.data,
-    AGBD_crs,
-    AGBD_lat,
-    AGBD_long
-)
+        model.load_state_dict(state_dict)
+        
+        torch.set_float32_matmul_precision('high')
+        model = torch.compile(model, backend="inductor", mode="default", dynamic=False)
+        model.eval()
+        
+        # --------------------------------------------------------------------------#
+        # Dense center-pixel inference ---------------------------------------------#
+        # --------------------------------------------------------------------------#
+        
+        patch_size = 25
+        half = patch_size // 2
+        batch_size = 1024
+        
+        # stacked_array must be (C, H, W)
+        C, H, W = stacked_array.shape
+        
+        # reflect padding on spatial axes only
+        padded = np.pad(
+            stacked_array,
+            ((0, 0), (half, half), (half, half)),
+            mode="reflect"
+        )
+        
+        Pred_Arr = np.empty((H, W), dtype=np.float32)
+        
+        with torch.no_grad():
+            for row in range(H):
+                patches = []
+        
+                for col in range(W):
+                    patch = padded[:, row:row + patch_size, col:col + patch_size]   
+                    patches.append(patch)
+        
+                patches = np.stack(patches, axis=0).astype(np.float32)              
+        
+                for start in range(0, W, batch_size):
+                    batch_np = patches[start:start + batch_size]                    
+                    batch_t = torch.from_numpy(batch_np).to(device)
+        
+                    out = model(batch_t)
+        
+        
+                    center_pred = out[:, 0, half, half]
+        
+        
+                    Pred_Arr[row, start:start + len(center_pred)] = center_pred.detach().cpu().numpy()
+        
+        Pred_Arr[Pred_Arr < 0] = 0
+        
+        # --------------------------------------------------------------------------#
+        # Write raster -------------------------------------------------------------#
+        # --------------------------------------------------------------------------#
+        
+        with rxr.open_rasterio(s2_10m_path) as s2_10m:
+            ref_lon = s2_10m.x.values
+            ref_lat = s2_10m.y.values
+        
+        agb_out_name = f"AGB_{month}_{w.split('_')[0]}.tif"
+        agb_estimates.append(agb_out_name)
+        
+        ut.array_to_raster(
+            agb_out_name,
+            Pred_Arr,
+            AOIcrs,
+            ref_lat,
+            ref_lon
+        )
+        
+        # --------------------------------------------------------------------------#
+        # Rescale and clip ---------------------------------------------------------#
+        # --------------------------------------------------------------------------#
+        
+        with rxr.open_rasterio(agb_out_name, masked=True) as dataset:
+            AGBD = dataset.squeeze()
+            AGBD = AGBD.rio.clip_box(*AOI, crs="EPSG:4326")
+        
+            AGBD_crs = AGBD.rio.crs
+            AGBD_lat = AGBD.coords["y"].values
+            AGBD_long = AGBD.coords["x"].values
+    
+        ut.array_to_raster(
+            agb_out_name,
+            AGBD.data,
+            AGBD_crs,
+            AGBD_lat,
+            AGBD_long
+        )
 
 # --------------------------------------------------------------------------#
 # Reference clipping -------------------------------------------------------#
@@ -370,7 +388,33 @@ with rxr.open_rasterio("34TGL.tif", masked=True) as src:
         resampling=rasterio.enums.Resampling.average
     )
 
-AGBD_REF.rio.to_raster("AGBD_REF.tif")
+AGBD_REF.rio.to_raster("AGB_Authors_Reference.tif")
+
+# average all outputs
+
+agb_rasters = []
+
+for rstr in agb_estimates:
+    with rasterio.open(rstr) as src:
+        arr = src.read(1).astype("float32")
+        agb_rasters.append(arr)
+        profile = src.profile.copy()
+        ref_shape = arr.shape
+        ref_crs = src.crs
+        ref_transform = src.transform
+
+mean_arr = np.mean(agb_rasters, axis=0)
+
+# still a bit too high when compared to the authors reference, so subtract the minimum
+mean_arr = mean_arr - np.min(mean_arr)
+
+profile.update(
+    dtype="float32",
+    count=1
+)
+
+with rasterio.open("AGB_Notebook_Prediction.tif", "w", **profile) as dst:
+    dst.write(mean_arr, 1)
 
 # ---------------------------------------------------------------------------#
 # Stacked Array Tiling ------------------------------------------------------#

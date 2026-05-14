@@ -39,15 +39,47 @@ def array_to_raster(outpath, datarr, crs, yarr, xarr, band_names=None):
     da.close()
     del da
 
+def normalize_data(data, norm_values, norm_strat, nodata_value = None) :
+    """
+    Normalize the data, according to various strategies:
+    - mean_std: subtract the mean and divide by the standard deviation
+    - pct: subtract the 1st percentile and divide by the 99th percentile
+    - min_max: subtract the minimum and divide by the maximum
 
-def MinMaxCustom(min_val, max_val, arr):
-    """Rescale a 2D array to the 0-1 range using 
-    externally supplied minimum and maximum values."""
-    minmax_arr = np.array([max_val, min_val])
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaler.fit(minmax_arr.reshape(-1, 1))
-    arr_rescaled = scaler.transform(arr.flatten().reshape(-1, 1)).reshape(arr.shape[0], arr.shape[1])
-    return arr_rescaled
+    Args:
+    - data (np.array): the data to normalize
+    - norm_values (dict): the normalization values
+    - norm_strat (str): the normalization strategy
+
+    Returns:
+    - normalized_data (np.array): the normalized data
+    """
+
+    if norm_strat == 'mean_std':
+        mean, std = norm_values['mean'], norm_values['std']
+        if nodata_value is not None :
+            data = np.where(data == nodata_value, 0, (data - mean) / std)
+        else : data = (data - mean) / std
+
+    elif norm_strat == 'pct':
+        p1, p99 = norm_values['p1'], norm_values['p99']
+        if nodata_value is not None :
+            data = np.where(data == nodata_value, 0, (data - p1) / (p99 - p1))
+        else :
+            data = (data - p1) / (p99 - p1)
+        data = np.clip(data, 0, 1)
+
+    elif norm_strat == 'min_max' :
+        min_val, max_val = norm_values['min'], norm_values['max']
+        if nodata_value is not None :
+            data = np.where(data == nodata_value, 0, (data - min_val) / (max_val - min_val))
+        else:
+            data = (data - min_val) / (max_val - min_val)
+    
+    else: 
+        raise ValueError(f'Normalization strategy `{norm_strat}` is not valid.')
+
+    return data
 
 # sentinel 2 download functions
 
@@ -70,15 +102,15 @@ def mask_s2(image, selected_bands, cld_prb_thresh=20):
     mask = cloud_mask.And(scl_mask)
     return image.updateMask(mask).select(selected_bands).divide(10000)
 
-def yearly_group_median(year, selected_bands, region, s2_tile):
+def yearly_group_median(time_range, selected_bands, region, s2_tile):
     
     """Build a yearly median Sentinel-2 composite for the target region 
     and MGRS tile after cloud filtering and masking."""
-    
+
     return (
         ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
         .filterBounds(region)
-        .filterDate(f"{year}-04-01", f"{year+1}-11-01")
+        .filterDate(f"{time_range[0]}", f"{time_range[1]}")
         .filter(ee.Filter.eq("MGRS_TILE", s2_tile))
         .filter(ee.Filter.lte("CLOUDY_PIXEL_PERCENTAGE", 30))
         .map(lambda img: mask_s2(img, selected_bands, cld_prb_thresh=20))
@@ -117,31 +149,21 @@ def sentinel2_processing(
         "B12": "B12",
     }
 
-    if not isinstance(s2_time_range, (list, tuple)):
-        raise ValueError(
-            "s2_time_range must be a non-empty list or tuple of years or two dates"
-        )
 
-    if all(isinstance(x, int) for x in s2_time_range):
-        imgs = [yearly_group_median(year, band_names, region, s2_tile) for year in s2_time_range]
-        img = ee.ImageCollection(imgs).median().clip(region)
+    imgs = [yearly_group_median(year, band_names, region, s2_tile) for year in s2_time_range]
+    img = ee.ImageCollection(imgs).median().clip(region)
 
-    elif (all(isinstance(x, str) for x in s2_time_range)):
-        start_date, end_date = s2_time_range
-        img = (
-            ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-            .filterBounds(region)
-            .filterDate(start_date, end_date)
-            .filter(ee.Filter.eq("MGRS_TILE", s2_tile))
-            .map(lambda image: mask_s2(image, band_names, cld_prb_thresh=20))
-            .median()
-            .clip(region)
-        )
+    start_date, end_date = s2_time_range
+    img = (
+        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+        .filterBounds(region)
+        .filterDate(start_date, end_date)
+        .filter(ee.Filter.eq("MGRS_TILE", s2_tile))
+        .map(lambda image: mask_s2(image, band_names, cld_prb_thresh=20))
+        .median()
+        .clip(region)
+    )
 
-    else:
-        raise ValueError(
-            's2_time_range must be either like [2018, 2019, 2020] or ["2020-10-22", "2020-10-23"]'
-        )
 
     with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as tmp:
         tmp_tif = tmp.name
@@ -168,12 +190,12 @@ def sentinel2_processing(
 
                 if ds.rio.nodata is not None:
                     arr = np.where(arr == ds.rio.nodata, np.nan, arr)
-
+                
                 norm_key = s2_norm_keys[band_name]
-                min_val = norm_values["S2_bands"][norm_key]["min"]
-                max_val = norm_values["S2_bands"][norm_key]["max"]
-
-                arr_rescaled = MinMaxCustom(min_val, max_val, arr).astype("float32")
+                norm_vals= norm_values["S2_bands"][norm_key]
+                
+                arr_rescaled = normalize_data(arr, norm_vals, 'pct')
+                
                 native_rescaled_bands.append(arr_rescaled)
 
             native_stack = np.stack(native_rescaled_bands, axis=0).astype("float32")
@@ -237,9 +259,10 @@ def dsm_processing(img, final_tif, match_raster, aoi_crs, region, norm_values):
             dem = src.squeeze("band", drop=True).astype("float32")
             dem_vals = dem.values.astype("float32")
             
-            dem_rescaled_native = MinMaxCustom(norm_values["DEM"]["min"], 
-                                               norm_values["DEM"]["max"], 
-                                               dem_vals).astype("float32")
+            dem_rescaled_native = normalize_data(
+                dem_vals, norm_values["DEM"], 'pct').astype("float32")
+
+            
             dem_rescaled_da = xr.DataArray(
                 dem_rescaled_native,
                 dims=("y", "x"),
@@ -289,8 +312,8 @@ def palsar_processing(region, ref_crs, match_raster, years, norm_values, s2_10m_
                 hh_dn = alos.sel(band=1).astype("float32")
                 hv_dn = alos.sel(band=2).astype("float32")
 
-                hh_gamma = xr.where(hh_dn == 0, -9999.0, 10.0 * np.log10(hh_dn ** 2) - 83.0).astype("float32")
-                hv_gamma = xr.where(hv_dn == 0, -9999.0, 10.0 * np.log10(hv_dn ** 2) - 83.0).astype("float32")
+                hh_gamma = xr.where(hh_dn == 0, -9999.0, (10.0 * (np.log10(hh_dn ** 2))) - 83.0).astype("float32")
+                hv_gamma = xr.where(hv_dn == 0, -9999.0, (10.0 * (np.log10(hv_dn ** 2))) - 83.0).astype("float32")
 
                 hh_list.append(hh_gamma.values)
                 hv_list.append(hv_gamma.values)
@@ -329,19 +352,13 @@ def palsar_processing(region, ref_crs, match_raster, years, norm_values, s2_10m_
     hv_match = hv_da.rio.reproject_match(match_raster, 
                                          resampling=Resampling.bilinear)
 
-    hh_rescaled = np.where(
-        hh_match.values == -9999.0,
-        0.0,
-        MinMaxCustom(norm_values["ALOS_bands"]["HH"]["min"], 
-                     norm_values["ALOS_bands"]["HH"]["max"], hh_match.values),
-    ).astype("float32")
+    hh_rescaled =  normalize_data(hh_match.values, 
+                                  norm_values["ALOS_bands"]["HH"], 
+                                  'pct',nodata_value=-9999.0).astype("float32")
     
-    hv_rescaled = np.where(
-        hv_match.values == -9999.0,
-        0.0,
-        MinMaxCustom(norm_values["ALOS_bands"]["HV"]["min"], 
-                     norm_values["ALOS_bands"]["HV"]["max"], hv_match.values),
-    ).astype("float32")
+    hv_rescaled =  normalize_data(hv_match.values, 
+                                  norm_values["ALOS_bands"]["HV"], 
+                                  'pct',nodata_value=-9999.0).astype("float32")
 
     array_to_raster("Palsar_HH.tif", hh_rescaled, match_raster.rio.crs, 
                     match_raster.y.values, match_raster.x.values, band_names=["HH"])
@@ -384,10 +401,10 @@ def landcover_processing(region, match_raster, aoi_crs):
             class_vals = np.where(class_vals == 255, np.nan, class_vals)
 
             lc_cos_native = np.where(np.isnan(class_vals), np.nan, 
-                                     (np.cos((2 * np.pi * class_vals) / 100.0) + 1.0) / 2.0).astype("float32")
+                                     (np.cos((2 * np.pi) * (class_vals / 100.0)) + 1.0) / 2.0).astype("float32")
             
             lc_sin_native = np.where(np.isnan(class_vals), np.nan, 
-                                     (np.sin((2 * np.pi * class_vals) / 100.0) + 1.0) / 2.0).astype("float32")
+                                     (np.sin((2 * np.pi) * (class_vals / 100.0)) + 1.0) / 2.0).astype("float32")
 
             lc_cos_da = xr.DataArray(lc_cos_native, dims=("y", "x"), 
                                      coords={"y": lc.y.values, "x": lc.x.values}, 
@@ -439,4 +456,4 @@ def landcover_processing(region, match_raster, aoi_crs):
         if os.path.exists(class_tmp):
             os.remove(class_tmp)
         if os.path.exists(prob_tmp):
-            os.remove(prob_tmp)
+            os.remove(prob_tmp)           
